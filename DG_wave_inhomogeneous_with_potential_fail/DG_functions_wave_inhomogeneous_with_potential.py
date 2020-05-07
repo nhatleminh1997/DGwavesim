@@ -9,11 +9,11 @@ import imageio
 # Range Kutta 4 
 # This is Tstepper for Evolve
 # F is the derivative
-def RK4_Step(dt, F,u, K, N,t,a,alpha, M_inv, M_inv_S, g = None):
-    w1 = F(u            , K, N, t         ,a, alpha, M_inv, M_inv_S, g)
-    w2 = F(u + 0.5*dt*w1, K, N, t + 0.5*dt,a, alpha, M_inv, M_inv_S, g)
-    w3 = F(u + 0.5*dt*w2, K, N, t + 0.5*dt,a, alpha, M_inv, M_inv_S, g)
-    w4 = F(u + dt*w3    , K, N, t + dt    ,a, alpha, M_inv, M_inv_S, g)
+def RK4_Step(dt, F,u, K, N,t,a,alpha, M_inv, M_inv_S, g = None,v= None, potential = None):
+    w1 = F(u            , K, N, t         ,a, alpha, M_inv, M_inv_S, g,v,potential)
+    w2 = F(u + 0.5*dt*w1, K, N, t + 0.5*dt,a, alpha, M_inv, M_inv_S, g,v,potential)
+    w3 = F(u + 0.5*dt*w2, K, N, t + 0.5*dt,a, alpha, M_inv, M_inv_S, g,v,potential)
+    w4 = F(u + dt*w3    , K, N, t + dt    ,a, alpha, M_inv, M_inv_S, g,v,potential)
     next_u = u + dt/6*(w1+2*w2+2*w3+w4)
     return next_u
 
@@ -73,11 +73,15 @@ def du_dt_element_k(u,k, K, N,t,a,alpha, M_inv, M_inv_S,g=None):
     du_dt_element = first_term + second_term + third_term
     return du_dt_element
 
-def DG_du_dt(u, K, N,t,a,alpha, M_inv, M_inv_S,g=None):
+def DG_du_dt(u, K, N,t,a,alpha, M_inv, M_inv_S,g=None,v = None):
     du_dt_elements = np.empty_like(u)
     for k in range(K):
         du_dt_elements[k] = du_dt_element_k(u,k, K, N,t,a,alpha, M_inv, M_inv_S)
-    return du_dt_elements
+    try:
+        return du_dt_elements + v
+    except TypeError:
+        return du_dt_elements
+
 
 
 def Evolve(t_initial, t_final, Tstepper, F,CF, start, end, initial_value_function, K, N,a,alpha,g= None):
@@ -102,24 +106,47 @@ def Evolve(t_initial, t_final, Tstepper, F,CF, start, end, initial_value_functio
         u = RK4_Step(dt,F,u, K,N,t,a,alpha,M_inv, M_inv_S,g)
         t = t + dt
     
-    return t, u, x,dt
+    return t, u, x
         
 # Radiative boundary conditions
 def f_star_at_x_k_radiative(u,k,K,N,t,a,alpha): 
     u_braces = (u[(k-1)%K][N] + u[(k)%K][0])/2                  #average 
     u_brackets = u[(k-1)%K][N] - u[(k)%K][0]                    #difference
+    
+    """if a>0:
+        if k == 0:
+            u_braces = u[k][0]/2
+            u_brackets = -u[k][0]
+    else:
+        if k == K:
+            u_braces = u[-1][-1]/2
+            u_brackets = -u[-1][-1]"""
+
     f_star = a*u_braces + np.abs(a)*(1-alpha)/2*u_brackets
+    
+    """
+    ###testing May 28
     if a > 0:
         if k==0:
             f_star = 0
     else: 
         if k == K:
             f_star = 0
-    
-        
+    """
+    if a > 0: 
+        if k == 0:
+            f_star = -u[0][0]
+        # if k == K:
+        #     f_star = u[-1][-1]
+        #f_star = -u[k%K][0]
+        #if k == K:
+        #    f_star= -u[-1][-1]
     return f_star 
 
-def du_dt_element_k_radiative(u,k, K, N,t,a,alpha, M_inv, M_inv_S, g = None):
+def du_dt_element_k_radiative(u,k, K, N,t,a,alpha, M_inv, M_inv_S, delta_source = None):
+    
+
+    
     first_term = -a*np.matmul( M_inv_S , u[k])
     second_term = M_inv[:,N] * (a*u[k][N]  - f_star_at_x_k_radiative(u,k+1,K,N,t,a,alpha))   #information from element on the right
     third_term = -M_inv[:,0] * (a*u[k][0]  - f_star_at_x_k_radiative(u,k  ,K,N,t,a,alpha))   #information from element on the left
@@ -127,25 +154,53 @@ def du_dt_element_k_radiative(u,k, K, N,t,a,alpha, M_inv, M_inv_S, g = None):
     du_dt_element = first_term + second_term + third_term
     
     if a > 0: 
+        # if k == 5:
+        #     du_dt_element = first_term + se
+        if k == 6:
+            du_dt_element += delta_source(t)*M_inv[:,0]
         if k == K-1:
-            du_dt_element = first_term + third_term
+            du_dt_element = first_term + third_term 
+        if k == 0: 
+            du_dt_element = first_term + second_term + third_term
+        """if k <= 5:
+            a = -a
+            alpha = 0.
+            first_term = -a*np.matmul( M_inv_S , u[k])
+            second_term = M_inv[:,N] * (a*u[k][N]  - f_star_at_x_k_radiative(u,k+1,K,N,t,a,alpha))   #information from element on the right
+            third_term = -M_inv[:,0] * (a*u[k][0]  - f_star_at_x_k_radiative(u,k  ,K,N,t,a,alpha))
+            du_dt_element = first_term + second_term + third_term
+            if k == 0: 
+                du_dt_element = first_term + second_term """
+        
+ 
+    
     else:
         if k == 0:
             du_dt_element = first_term + second_term 
-    
-    #Implememnting delta source g(t) at x = 0 for a>0
-
-    if k ==0:
-        du_dt_element += g(t)*M_inv[:,0]
+        if k == K-1:
+            du_dt_element = first_term + third_term 
+        if k == 5:
+            du_dt_element += (delta_source(t)*M_inv[:,N])
 
 
     return du_dt_element
 
-def DG_du_dt_radiative(u, K, N,t,a,alpha, M_inv, M_inv_S,g = None):
+def DG_du_dt_radiative(u, K, N,t,a,alpha, M_inv, M_inv_S,delta_source = None, v = None, potential = None):
     du_dt_elements = np.empty_like(u)
     for k in range(K):
-        du_dt_elements[k] = du_dt_element_k_radiative(u,k, K, N,t,a,alpha, M_inv, M_inv_S,g)
-    return du_dt_elements
+        du_dt_elements[k] = du_dt_element_k_radiative(u,k, K, N,t,a,alpha, M_inv, M_inv_S,delta_source)
+    
+    try:
+        return du_dt_elements + v + potential
+    except TypeError:
+        try:
+            return du_dt_elements + v
+        except TypeError:
+            try:
+                return du_dt_elements + potential
+            except TypeError:
+                return du_dt_elements
+
 
 
 def interpolated_plot(u_elements,x_elements, nx_element):
